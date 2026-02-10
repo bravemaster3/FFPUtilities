@@ -1,0 +1,178 @@
+---
+title: "Flux Footprint Analysis Workflow"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Flux Footprint Analysis Workflow}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 6,
+  warning = FALSE,
+  message = TRUE
+)
+```
+
+# Introduction
+
+This vignette demonstrates flux footprint calculation and visualization using the Kljun et al. (2015) model with May 2020 data from the Halmyran peatland site in northern Sweden.
+
+## Prerequisites
+
+Download the FFP model from:
+[http://footprint.kljun.net/](http://footprint.kljun.net/)
+```{r eval=FALSE}
+source("D:/EC/R_codes_organized/FFP_R/FFP_functions/calc_footprint_FFP_climatology.R")
+```
+
+## Setup
+```{r setup}
+library(FFPUtilities)
+library(ggplot2)
+library(sf)
+library(lubridate)
+
+
+start_date = "2020-05-15"
+end_date = "2020-05-16"
+```
+
+# Step 1: Load Eddy Covariance Data
+```{r load-data}
+ec_file <- system.file("extdata", "ec_data.csv", package = "FFPUtilities")
+ec_data <- read.csv(ec_file)
+
+ec_data$datetime <- parse_date_time(
+  ec_data$datetime, 
+  orders = c("ymd HMS", "ymd"), 
+  tz = "UTC"
+)
+
+
+site_file <- system.file("extdata", "site_coords.csv", package = "FFPUtilities")
+site_coords <- read.csv(site_file)
+
+head(ec_data)
+site_coords
+```
+
+# Step 2: Extract BLH from GRIB
+```{r extract-blh}
+grib_file <- system.file("extdata", "degfert_blh.grib", package = "FFPUtilities")
+
+blh_data <- extract_blh_from_grib(
+  grib_file = grib_file,
+  site_long = site_coords$long,
+  site_lat = site_coords$lat,
+  filter_start_date = start_date,
+  filter_end_date = end_date
+)
+
+head(blh_data)
+```
+
+# Step 3: Prepare Data
+```{r prepare-data}
+ec_clean <- prepare_EC_data(
+  ec_data = ec_data,
+  blh_data = blh_data,
+  required_vars = c("wind_speed", "v_var", "u.", "wind_dir", "blh", "L"),
+  datetime_col = "datetime",
+  filter_start_date = start_date,
+  filter_end_date = end_date
+)
+
+head(ec_clean)
+```
+
+# Step 4: Extract Parameters
+```{r extract-params}
+params <- extract_FFP_params(
+  ec_data = ec_clean,
+  row_index = 1:nrow(ec_clean),
+  zm = 2.6,
+  ustar_col = "u."
+)
+
+str(params)
+```
+
+# Step 5: Calculate Footprint
+```{r calc-footprint, eval=FALSE}
+radius_vector <- c(50, 60, 70, 80, 90)
+
+FFP <- calc_footprint_FFP_climatology(
+  zm = params$zm,
+  z0 = params$z0,
+  umean = params$umean,
+  h = params$h,
+  ol = params$ol,
+  sigmav = params$sigmav,
+  ustar = params$ustar,
+  wind_dir = params$wind_dir,
+  dx = 0.3,
+  r = radius_vector,
+  crop = 1,
+  fig = 0
+)
+```
+```{r simulate-ffp, echo=FALSE}
+# set.seed(123)
+# n_points <- 100
+# 
+# FFP <- list(
+#   xr = lapply(1:5, function(i) {
+#     angle <- seq(0, 2*pi, length.out = n_points)
+#     radius <- (100 - i*10) * (1 + 0.3 * cos(3*angle))
+#     radius * cos(angle + pi/6)
+#   }),
+#   yr = lapply(1:5, function(i) {
+#     angle <- seq(0, 2*pi, length.out = n_points)
+#     radius <- (100 - i*10) * (1 + 0.3 * cos(3*angle))
+#     radius * sin(angle + pi/6) * 0.6
+#   }),
+#   x_2d = matrix(seq(-150, 150, length.out = 60), nrow = 1),
+#   y_2d = matrix(seq(-150, 150, length.out = 60), ncol = 1),
+#   fclim_2d = matrix(exp(-((seq(-150, 150, length.out = 60))^2)/5000), 
+#                     nrow = 60, ncol = 60)
+# )
+# radius_vector <- c(50, 60, 70, 80, 90)
+```
+
+# Step 6: Convert to Shapefiles
+```{r create-shapefiles}
+footprint_contours <- FFP_to_shapefiles(
+  FFP = FFP,
+  site_long = site_coords$long,
+  site_lat = site_coords$lat,
+  radius_vector = radius_vector,
+  project_shapefile = TRUE,
+  project_crs_epsg = 3006,
+  save_option = "both",
+  output_dir = "C:/Users/kono0001/OneDrive - Sveriges lantbruksuniversitet/OTHER/personal/helping_others/Betty/Skogaryd/Scripts/Footprints"
+)
+
+names(footprint_contours)
+```
+
+# Step 7: Visualize
+```{r plot, fig.width=8, fig.height=7}
+plot_footprint_with_site(
+  footprint_sf = footprint_contours,
+  site_coords = site_coords,
+  title = paste("Halmyran -", params$datetime),
+  plot_crs_epsg = 3006,
+  show_contour_labels = TRUE
+)
+```
+
+# References
+
+Kljun, N., Calanca, P., Rotach, M.W., Schmid, H.P., 2015. A simple two-dimensional parameterisation for Flux Footprint Prediction (FFP). Geoscientific Model Development 8, 3695–3713. https://doi.org/10.5194/gmd-8-3695-2015
+```{r session-info}
+sessionInfo()
+```
