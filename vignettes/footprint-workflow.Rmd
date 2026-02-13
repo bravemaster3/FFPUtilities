@@ -26,7 +26,10 @@ This vignette demonstrates flux footprint calculation and visualization using th
 Download the FFP model from:
 [http://footprint.kljun.net/](http://footprint.kljun.net/)
 ```{r eval=FALSE}
-source("D:/EC/R_codes_organized/FFP_R/FFP_functions/calc_footprint_FFP_climatology.R")
+r_ffp_path <- system.file("FFP_R", package = "FFPUtilities")
+ffp_climatology_function_path <- file.path(r_ffp_path, "calc_footprint_FFP_climatology.R")
+
+source(ffp_climatology_function_path)
 ```
 
 ## Setup
