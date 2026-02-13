@@ -1,0 +1,231 @@
+---
+title: "Flux Footprint Analysis with MATLAB"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Flux Footprint Analysis with MATLAB}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 6,
+  warning = FALSE,
+  message = TRUE
+)
+```
+
+# Introduction
+
+This vignette demonstrates flux footprint calculation using MATLAB's faster implementation of the Kljun et al. (2015) model, integrated with R for data preparation and visualization.
+
+## Prerequisites
+
+**Required:**
+- MATLAB installed on your system
+- MATLAB FFP functions from [http://footprint.kljun.net/](http://footprint.kljun.net/)
+- R package `matlabr` installed: `install.packages("matlabr")`
+
+## Setup
+```{r setup}
+library(FFPUtilities)
+library(ggplot2)
+library(sf)
+library(lubridate)
+library(matlabr)
+
+# Define date range
+start_date <- "2020-05-15"
+end_date <- "2020-05-16"
+
+# Get MATLAB scripts directory from package
+matlab_ffp_path <- system.file("FFP_Matlab", package = "FFPUtilities")
+
+# Verify MATLAB files exist
+if (matlab_ffp_path == "" || !file.exists(file.path(matlab_ffp_path, "calc_footprint_matlab.m"))) {
+  stop("MATLAB scripts not found in package. ",
+       "Please ensure FFP_Matlab folder is in inst/ directory.")
+}
+
+message("MATLAB scripts found at: ", matlab_ffp_path)
+
+# Output directory for MATLAB results
+output_dir <- "C:/Users/kono0001/OneDrive - Sveriges lantbruksuniversitet/OTHER/personal/helping_others/Betty/Skogaryd/Scripts/Temp"
+```
+
+# Step 1: Load and Prepare Data in R
+```{r load-data}
+# Load EC data
+ec_file <- system.file("extdata", "ec_data.csv", package = "FFPUtilities")
+ec_data <- read.csv(ec_file)
+ec_data$datetime <- parse_date_time(
+  ec_data$datetime, 
+  orders = c("ymd HMS", "ymd"), 
+  tz = "UTC"
+)
+
+# Load site coordinates
+site_file <- system.file("extdata", "site_coords.csv", package = "FFPUtilities")
+site_coords <- read.csv(site_file)
+
+head(ec_data)
+site_coords
+```
+
+# Step 2: Extract BLH from GRIB
+```{r extract-blh}
+grib_file <- system.file("extdata", "degfert_blh.grib", package = "FFPUtilities")
+
+blh_data <- extract_blh_from_grib(
+  grib_file = grib_file,
+  site_long = site_coords$long,
+  site_lat = site_coords$lat,
+  filter_start_date = start_date,
+  filter_end_date = end_date
+)
+
+head(blh_data)
+```
+
+# Step 3: Prepare Data for MATLAB
+```{r prepare-data}
+ec_clean <- prepare_EC_data(
+  ec_data = ec_data,
+  blh_data = blh_data,
+  required_vars = c("wind_speed", "v_var", "u.", "wind_dir", "blh", "L"),
+  datetime_col = "datetime",
+  filter_start_date = start_date,
+  filter_end_date = end_date
+)
+
+# Rename u. to ustar for MATLAB compatibility
+names(ec_clean)[names(ec_clean) == "u."] <- "ustar"
+
+# Save prepared data for MATLAB
+matlab_input_csv <- file.path(output_dir, "ec_data_prepared.csv")
+write.csv(ec_clean, matlab_input_csv, row.names = FALSE)
+
+message("Prepared ", nrow(ec_clean), " observations for MATLAB processing")
+```
+
+
+# Step 4: Calculate Footprint in MATLAB
+```{r calc-footprint-matlab}
+# Site parameters
+zm <- 2.6
+radius_vector <- c(50, 60, 70, 80, 90)
+
+# Choose FFP function
+# Options: "calc_footprint_FFP_climatology" or "calc_footprint_FFP_climatology_parallel"
+ffp_function <- "calc_footprint_FFP_climatology_parallel"
+
+# Create MATLAB command
+matlab_cmd <- sprintf(
+  "addpath('%s'); calc_footprint_matlab('%s', '%s', %.6f, %.6f, %.1f, [%s], '%s');",
+  matlab_ffp_path,
+  matlab_input_csv,
+  output_dir,
+  site_coords$long,
+  site_coords$lat,
+  zm,
+  paste(radius_vector, collapse = ", "),
+  ffp_function
+)
+
+# Run MATLAB
+message("Running MATLAB footprint calculation with ", ffp_function, "...")
+run_matlab_code(matlab_cmd)
+message("MATLAB calculation complete!")
+```
+
+# Step 5: Load MATLAB Output and Convert to Shapefiles
+```{r load-matlab-output}
+# Read MATLAB output CSVs
+footprint_list <- list()
+
+for (pct in radius_vector) {
+  csv_file <- file.path(output_dir, sprintf("footprint_%dpct.csv", pct))
+  
+  if (file.exists(csv_file)) {
+    df <- read.csv(csv_file)
+    
+     # Remove rows with NaN/NA values
+    df <- df[complete.cases(df), ]
+    # Convert to shapefile using existing function
+    footprint_sf <- long_lat_to_shapefile(
+      df,
+      project_shapefile = TRUE,
+      project_crs_epsg = 3006
+    )
+    
+    # Add contour percentage attribute
+    footprint_sf$contour_pct <- pct
+    
+    footprint_list[[paste0(pct, "pct")]] <- footprint_sf
+  } else {
+    warning("MATLAB output file not found: ", csv_file)
+  }
+}
+
+# Reverse order (largest first)
+footprint_contours <- rev(footprint_list)
+
+message("Loaded ", length(footprint_contours), " footprint contours from MATLAB output")
+names(footprint_contours)
+```
+
+# Step 6: Visualize
+```{r plot, fig.width=8, fig.height=7}
+plot_footprint_with_site(
+  footprint_sf = footprint_contours,
+  site_coords = site_coords,
+  title = "Footprint Climatology (MATLAB) - Halmyran",
+  plot_crs_epsg = 3006,
+  show_contour_labels = TRUE
+)
+```
+
+# Step 7: Save Shapefiles (Optional)
+```{r save-shapefiles, eval=FALSE}
+# Define final output directory
+final_output_dir <- "C:/my_output/footprints"
+
+# Manually save using sf::st_write since we already have the sf objects
+dir.create(final_output_dir, recursive = TRUE, showWarnings = FALSE)
+
+# Save individual files
+for (name in names(footprint_contours)) {
+  file_path <- file.path(final_output_dir, paste0("footprint_", name, ".shp"))
+  sf::st_write(footprint_contours[[name]], file_path, append = FALSE, quiet = TRUE)
+}
+
+# Save combined file
+combined <- do.call(rbind, footprint_contours)
+combined_path <- file.path(final_output_dir, "footprint_combined.shp")
+sf::st_write(combined, combined_path, append = FALSE, quiet = TRUE)
+
+message("Shapefiles saved to: ", final_output_dir)
+```
+
+# Comparison with R Implementation
+
+The MATLAB implementation is significantly faster for large datasets (>1000 observations) but requires MATLAB to be installed. The R implementation (`calc_footprint_FFP_climatology.R`) is slower but doesn't require additional software.
+
+**Choose MATLAB when:**
+- Processing >1000 observations
+- Speed is critical
+- MATLAB is already available
+
+**Choose R when:**
+- Smaller datasets (<500 observations)
+- Pure R workflow preferred
+- MATLAB not available
+
+# References
+
+Kljun, N., Calanca, P., Rotach, M.W., Schmid, H.P., 2015. A simple two-dimensional parameterisation for Flux Footprint Prediction (FFP). Geoscientific Model Development 8, 3695–3713. https://doi.org/10.5194/gmd-8-3695-2015
+```{r session-info}
+sessionInfo()
+```
