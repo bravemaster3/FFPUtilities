@@ -11,7 +11,8 @@ prepare_EC_data(
   required_vars = c("wind_speed", "v_var", "u*", "wind_dir", "blh", "L"),
   na_value = -9999,
   filter_start_date = NULL,
-  filter_end_date = NULL
+  filter_end_date = NULL,
+  zm = NULL
 )
 }
 \arguments{
@@ -34,6 +35,11 @@ Format: "YYYY-MM-DD". Default is NULL (no filtering).}
 
 \item{filter_end_date}{Date or character. Optional. Filter data to dates <= this value.
 Format: "YYYY-MM-DD". Default is NULL (no filtering).}
+
+\item{zm}{Numeric. Measurement height above displacement height (m). If provided,
+rows where \code{blh <= zm} are removed to satisfy the Kljun FFP model validity
+requirement that zm must be smaller than the boundary layer height. Default is
+NULL (no filtering).}
 }
 \value{
 A data frame with merged EC and BLH data, with missing values properly
@@ -63,6 +69,16 @@ ec_clean <- prepare_EC_data(
   blh_data = blh_data_example,
   filter_start_date = "2020-05-01",
   filter_end_date = "2020-05-31"
+)
+
+# Prepare data with zm filtering (removes rows where blh <= zm)
+zm <- 34.5 - (0.67 * 23.5)  # measurement height minus displacement height
+ec_clean <- prepare_EC_data(
+  ec_data = ec_data_example,
+  blh_data = blh_data_example,
+  filter_start_date = "2020-05-01",
+  filter_end_date = "2020-05-31",
+  zm = zm
 )
 }
 }
