@@ -17,6 +17,10 @@
 #'   Format: "YYYY-MM-DD". Default is NULL (no filtering).
 #' @param filter_end_date Date or character. Optional. Filter data to dates <= this value.
 #'   Format: "YYYY-MM-DD". Default is NULL (no filtering).
+#' @param zm Numeric. Measurement height above displacement height (m). If provided,
+#'   rows where \code{blh <= zm} are removed to satisfy the Kljun FFP model validity
+#'   requirement that zm must be smaller than the boundary layer height. Default is
+#'   NULL (no filtering).
 #'
 #' @return A data frame with merged EC and BLH data, with missing values properly
 #'   handled, filtered by date range if specified, and only complete cases retained.
@@ -43,6 +47,16 @@
 #'   filter_start_date = "2020-05-01",
 #'   filter_end_date = "2020-05-31"
 #' )
+#'
+#' # Prepare data with zm filtering (removes rows where blh <= zm)
+#' zm <- 34.5 - (0.67 * 23.5)  # measurement height minus displacement height
+#' ec_clean <- prepare_EC_data(
+#'   ec_data = ec_data_example,
+#'   blh_data = blh_data_example,
+#'   filter_start_date = "2020-05-01",
+#'   filter_end_date = "2020-05-31",
+#'   zm = zm
+#' )
 #' }
 prepare_EC_data <- function(ec_data,
                             blh_data,
@@ -50,7 +64,8 @@ prepare_EC_data <- function(ec_data,
                             required_vars = c("wind_speed", "v_var", "u*", "wind_dir", "blh", "L"),
                             na_value = -9999,
                             filter_start_date = NULL,
-                            filter_end_date = NULL) {
+                            filter_end_date = NULL,
+                            zm = NULL) {
 
   # Convert na_value to NA
   ec_data[ec_data == na_value] <- NA
@@ -104,6 +119,17 @@ prepare_EC_data <- function(ec_data,
 
   # Remove incomplete cases
   clean_data <- subset_data[complete.cases(subset_data), ]
+
+  # Filter rows where zm >= blh (required by Kljun FFP model: zm must be < h)
+  if(!is.null(zm) && "blh" %in% names(clean_data)) {
+    n_before <- nrow(clean_data)
+    clean_data <- clean_data[clean_data$blh > zm, ]
+    n_removed <- n_before - nrow(clean_data)
+    if(n_removed > 0) {
+      message("Removed ", n_removed, " observations where blh <= zm (",
+              round(zm, 2), " m) — FFP model validity requirement")
+    }
+  }
 
   message("Data prepared: ", nrow(clean_data), " complete observations out of ",
           nrow(merged_data), " total observations")
